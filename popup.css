@@ -84,7 +84,7 @@ label span:first-child {
 label input:not([type=checkbox]) {
 	flex: 1;
 }
-label input[type=number], .element-reset {
+label input[type=number], .element-reset, .domain-btn-row>button {
 	background: transparent;
 	color: inherit;
 	border-radius: 5px;
@@ -96,10 +96,10 @@ label input[type=number] {
 	width: 7em;
 	margin-left: .5em;
 }
-.element-reset:focus {
+.element-reset:focus, .domain-btn-row>button:focus {
 	outline: 1px solid;
 }
-.element-reset:active {
+.element-reset:active, .domain-btn-row>button:active {
 	background: rgba(69, 69, 69, .3);
 }
 .header-row {
@@ -116,6 +116,12 @@ label input[type=number] {
 	font-size: 0.8em;
 	color: #666;
 	padding: 1rem;
+}
+
+.domain-btn-row {
+	display: flex;
+	flex-flow: row;
+	gap: 15px;
 }
 
 @media screen and (prefers-color-scheme: dark) {
