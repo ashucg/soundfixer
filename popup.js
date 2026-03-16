@@ -6,66 +6,32 @@ const elementsList = document.getElementById('elements-list')
 const allElements = document.getElementById('all-elements')
 const indivElements = document.getElementById('individual-elements')
 const elementsTpl = document.getElementById('elements-tpl')
+const defaultSettings = { gain: 1, pan: 0, mono: false, flip: false };
+let currentDomain = false;
 
 function applySettings (fid, elid, newSettings) {
-	return browser.tabs.executeScript(tid, { frameId: fid, code: `(function () {
-		const el = document.querySelector('[data-x-soundfixer-id="${elid}"]')
-		if (!el.xSoundFixerContext) {
-			el.xSoundFixerContext = new AudioContext()
-			el.xSoundFixerGain = el.xSoundFixerContext.createGain()
-			el.xSoundFixerPan = el.xSoundFixerContext.createStereoPanner()
-			el.xSoundFixerSplit = el.xSoundFixerContext.createChannelSplitter(2)
-			el.xSoundFixerMerge = el.xSoundFixerContext.createChannelMerger(2)
-			el.xSoundFixerSource = el.xSoundFixerContext.createMediaElementSource(el)
-			el.xSoundFixerSource.connect(el.xSoundFixerGain)
-			el.xSoundFixerGain.connect(el.xSoundFixerPan)
-			el.xSoundFixerPan.connect(el.xSoundFixerContext.destination)
-			el.xSoundFixerOriginalChannels = el.xSoundFixerContext.destination.channelCount
-		}
-		const newSettings = ${JSON.stringify(newSettings)}
-		if ('gain' in newSettings) {
-			el.xSoundFixerGain.gain.value = newSettings.gain
-		}
-		if ('pan' in newSettings) {
-			el.xSoundFixerPan.pan.value = newSettings.pan
-		}
-		if ('mono' in newSettings) {
-			el.xSoundFixerContext.destination.channelCount = newSettings.mono ? 1 : el.xSoundFixerOriginalChannels
-		}
-		if ('flip' in newSettings) {
-			el.xSoundFixerFlipped = newSettings.flip
-			el.xSoundFixerMerge.disconnect()
-			el.xSoundFixerPan.disconnect()
-			if (el.xSoundFixerFlipped) {
-				el.xSoundFixerPan.connect(el.xSoundFixerSplit)
-				el.xSoundFixerSplit.connect(el.xSoundFixerMerge, 0, 1)
-				el.xSoundFixerSplit.connect(el.xSoundFixerMerge, 1, 0)
-				el.xSoundFixerMerge.connect(el.xSoundFixerContext.destination)
-			} else {
-				el.xSoundFixerPan.connect(el.xSoundFixerContext.destination)
-			}
-		}
-		el.xSoundFixerSettings = {
-			gain: el.xSoundFixerGain.gain.value,
-			pan: el.xSoundFixerPan.pan.value,
-			mono: el.xSoundFixerContext.destination.channelCount == 1,
-			flip: el.xSoundFixerFlipped,
-		}
-	})()` })
+	browser.tabs.sendMessage(tid, {
+		action: "applySettings",
+		frameId: fid,
+		elid: elid,
+		newSettings: newSettings
+	});
+}
+
+async function getDomainSettings() {
+	const storedSettings = await browser.storage.local.get(currentDomain);
+	return storedSettings[currentDomain];
 }
 
 browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 	tid = tabs[0].id
+	currentDomain = (new URL(tabs[0].url)).hostname;
 	return browser.webNavigation.getAllFrames({ tabId: tid }).then(frames =>
 		Promise.all(frames.map(frame => {
 			const fid = frame.frameId
 			return browser.tabs.executeScript(tid, { frameId: fid, code: `(function () {
 				const result = new Map()
 				for (const el of document.querySelectorAll('video, audio')) {
-					if (!el.hasAttribute('data-x-soundfixer-id')) {
-						el.setAttribute('data-x-soundfixer-id',
-							Math.random().toString(36).substr(2, 10))
-					}
 					result.set(el.getAttribute('data-x-soundfixer-id'), {
 						type: el.tagName.toLowerCase(),
 						isPlaying: (el.currentTime > 0 && !el.paused && !el.ended && el.readyState > 2),
@@ -77,14 +43,16 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 			.catch(err => console.error(`tab ${tid} frame ${fid}`, err))
 		}))
 	)
-}).then(_ => {
+}).then(async () => {
 	elementsList.textContent = ''
 	let elCount = 0
+	const domainSettings = await getDomainSettings();
 	for (const [fid, els] of frameMap) {
 		for (const [elid, el] of els) {
 			const settings = el.settings || {}
 			const node = document.createElement('li')
 			node.appendChild(document.importNode(elementsTpl.content, true))
+			node.querySelector('.domain-btn-row').remove();
 			node.dataset.fid = fid
 			node.dataset.elid = elid
 			node.querySelector('.element-label').textContent = `
@@ -109,7 +77,7 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 					this.value = this.getAttribute('max')
 				if (+this.value < +this.getAttribute('min'))
 					this.value = this.getAttribute('min')
-				
+
 				applySettings(fid, elid, { gain: this.value })
 				this.parentElement.querySelector('.element-gain').value = (+this.value).toFixed(2)
 			})
@@ -126,7 +94,7 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 					this.value = this.getAttribute('max')
 				if (+this.value < +this.getAttribute('min'))
 					this.value = this.getAttribute('min')
-				
+
 				applySettings(fid, elid, { pan: this.value })
 				this.parentElement.querySelector('.element-pan').value = (+this.value).toFixed(2)
 			})
@@ -147,18 +115,18 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 				pan.parentElement.querySelector('.element-pan-num').value = '' + pan.value
 				mono.checked = false
 				flip.checked = false
-				applySettings(fid, elid, { gain: 1, pan: 0, mono: false, flip: false })
+				applySettings(fid, elid, defaultSettings)
 			}
 			elementsList.appendChild(node)
 			elCount += 1
 		}
 	}
-	if (elCount == 0) {
+	if (elCount === 0) {
 			allElements.innerHTML = 'No audio/video found in the current tab. Note that some websites do not work because of cross-domain security restrictions.'
 			indivElements.remove()
-		} else {
+	} else {
 			// Simple solution: use the first element's settings for 'All media' controls
-			let firstSettings = { gain: 1, pan: 0, mono: false, flip: false }
+			let firstSettings = domainSettings || defaultSettings;
 			for (const [, els] of frameMap) {
 				for (const [, el] of els) {
 					if (el.settings) {
@@ -178,9 +146,9 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 			node.querySelector('.element-label').textContent = `All media on the page`
 			const gain = node.querySelector('.element-gain')
 			const gainNumberInput = node.querySelector('.element-gain-num')
-			gain.value = (+firstSettings.gain).toFixed(2)
+			gain.value = (firstSettings?.gain || 1).toFixed(2);
 			gainNumberInput.value = '' + gain.value
-			function applyGain(value) {
+			function applyGain (value) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { gain: value })
@@ -204,9 +172,9 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 			})
 			const pan = node.querySelector('.element-pan')
 			const panNumberInput = node.querySelector('.element-pan-num')
-			pan.value = firstSettings.pan
-		panNumberInput.value = (+firstSettings.pan).toFixed(2)
-			function applyPan(value) {
+			pan.value = firstSettings?.pan || 0;
+			panNumberInput.value = (+pan.value).toFixed(2)
+			function applyPan (value) {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
 						applySettings(fid, elid, { pan: value })
@@ -229,7 +197,7 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 				applyPan(+this.value)
 			})
 			const mono = node.querySelector('.element-mono')
-			mono.checked = firstSettings.mono
+			mono.checked = firstSettings?.mono || false
 			mono.addEventListener('change', _ => {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
@@ -240,7 +208,7 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 				}
 			})
 			const flip = node.querySelector('.element-flip')
-			flip.checked = firstSettings.flip
+			flip.checked = firstSettings?.flip || false
 			flip.addEventListener('change', _ => {
 				for (const [fid, els] of frameMap) {
 					for (const [elid, el] of els) {
@@ -277,6 +245,20 @@ browser.tabs.query({ currentWindow: true, active: true }).then(tabs => {
 					}
 				}
 			}
+			if (node.querySelector('.domain-btn-row') && currentDomain) {
+				node.querySelector('.element-save-default').onclick = async function () {
+					const domainSettings = {
+						gain: Number(gain.value),
+						pan: Number(pan.value),
+						mono: mono.checked,
+						flip: flip.checked,
+					};
+					await browser.storage.local.set({ [currentDomain]: domainSettings });
+				}
+				node.querySelector('.element-reset-default').onclick = async function () {
+					await browser.storage.local.remove([currentDomain]);
+				}
+			}
 			allElements.appendChild(node)
-		}
+	}
 })
